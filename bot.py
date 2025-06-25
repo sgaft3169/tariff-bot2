@@ -6,8 +6,12 @@ from telegram.ext import (
 from sqlalchemy import create_engine, Column, Integer, String, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
+import logging
 
-# Подключение к PostgreSQL
+# Логирование
+logging.basicConfig(level=logging.INFO)
+
+# --- База данных ---
 Base = declarative_base()
 engine = create_engine("postgresql://tariff_db_g7eb_user:K73qHQVHxpqF5SM71Li3OzhVblBNlmve@dpg-d1digvbe5dus73djsp1g-a/tariff_db_g7eb")
 Session = sessionmaker(bind=engine)
@@ -27,23 +31,26 @@ class Record(Base):
 
 Base.metadata.create_all(engine)
 
-# Состояния
+# --- Состояния ---
 CUR, NEW, COST, PERIOD = range(4)
 CHANNEL_ID = "@F_S_Ta"
 
-# Кнопка для проверки подписки
+# --- Кнопка подписки ---
 check_keyboard = InlineKeyboardMarkup(
     [[InlineKeyboardButton("✅ Проверить подписку", callback_data="check_sub")]]
 )
 
+# --- Команда /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     await update.message.reply_text(
-        "Чтобы использовать бота, подпишитесь на канал:\nhttps://t.me/F_S_Ta\n\n"
-        "После этого нажмите кнопку ниже 👇",
+        "Чтобы использовать бота, подпишитесь на канал:\n"
+        "https://t.me/F_S_Ta\n\n"
+        "После подписки нажмите кнопку ниже 👇",
         reply_markup=check_keyboard
     )
-    return ConversationHandler.END  # пока не начинаем диалог
+    return ConversationHandler.END
 
+# --- Проверка подписки по кнопке ---
 async def check_subscription_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -51,25 +58,25 @@ async def check_subscription_callback(update: Update, context: ContextTypes.DEFA
 
     try:
         member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
+        logging.info(f"{user_id=} {member.status=}")
         if member.status in ["member", "administrator", "creator"]:
-            await query.message.reply_text("✅ Подписка подтверждена! Введите текущий тариф (₽/мес):")
-            return await cur_entry_from_callback(update, context)
+            await context.bot.send_message(user_id, "✅ Подписка подтверждена! Теперь нажмите /calculate для начала расчёта")
         else:
             raise Exception("Not subscribed")
-    except:
+    except Exception as e:
+        logging.error(f"Ошибка подписки: {e}")
         await query.message.reply_text(
-            "🚫 Вы не подписались на канал. Пожалуйста, подпишитесь и нажмите кнопку ещё раз.",
+            "🚫 Вы ещё не подписаны на канал. Подпишитесь и нажмите кнопку снова.",
             reply_markup=check_keyboard
         )
-        return ConversationHandler.END
 
-# Начинаем опрос после подписки
-async def cur_entry_from_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data.clear()  # очищаем предыдущие данные на всякий случай
-    context.user_data["from_callback"] = True
+# --- Старт расчёта после подписки ---
+async def start_calculation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.clear()
+    await update.message.reply_text("Введите текущий тариф (₽/мес):")
     return CUR
 
-# Опрос
+# --- Пошаговый опрос ---
 async def cur_tariff(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['cur'] = float(update.message.text)
     await update.message.reply_text("Введите новый тариф:")
@@ -100,6 +107,8 @@ async def period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
             payback = m
     payback_text = str(payback) if payback else "Не достигнута"
     economy = round(cumulative_old - cumulative_new)
+
+    # Сохраняем в БД
     rec = Record(
         date=datetime.now().strftime("%Y-%m-%d %H:%M"),
         user=update.effective_user.full_name,
@@ -108,18 +117,27 @@ async def period(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     )
     session.add(rec)
     session.commit()
-    await update.message.reply_text(f"Окупаемость: {payback_text} мес.\nЭкономия: {economy}₽")
+
+    await update.message.reply_text(
+        f"✅ Расчёт завершён!\n\n"
+        f"Окупаемость: {payback_text} мес.\n"
+        f"Экономия: {economy}₽"
+    )
     return ConversationHandler.END
 
+# --- Отмена ---
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text("Отменено.")
+    await update.message.reply_text("Операция отменена.")
     return ConversationHandler.END
 
+# --- Запуск приложения ---
 if __name__ == '__main__':
     app = ApplicationBuilder().token("8134172809:AAFydCkI2T32hYxL6y8zCVlTdp_lrL7hY18").build()
 
     conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, cur_tariff)],
+        entry_points=[
+            CommandHandler("calculate", start_calculation)
+        ],
         states={
             CUR: [MessageHandler(filters.TEXT & ~filters.COMMAND, cur_tariff)],
             NEW: [MessageHandler(filters.TEXT & ~filters.COMMAND, new_tariff)],
