@@ -32,8 +32,8 @@ CUR, NEW, COST, PERIOD = range(4)
 CHANNEL_ID = "@F_S_Ta"
 
 # Кнопка для проверки подписки
-check_keyboard = InlineKeyboardMarkup().add(
-    InlineKeyboardButton("✅ Проверить подписку", callback_data="check_sub")
+check_keyboard = InlineKeyboardMarkup(
+    [[InlineKeyboardButton("✅ Проверить подписку", callback_data="check_sub")]]
 )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
