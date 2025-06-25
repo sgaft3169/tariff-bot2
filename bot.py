@@ -1,6 +1,8 @@
-
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes,
+    ConversationHandler, CallbackQueryHandler
+)
 from sqlalchemy import create_engine, Column, Integer, String, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
@@ -29,25 +31,45 @@ Base.metadata.create_all(engine)
 CUR, NEW, COST, PERIOD = range(4)
 CHANNEL_ID = "@F_S_Ta"
 
-async def check_subscription(update: Update) -> bool:
-    user_id = update.effective_user.id
-    try:
-        member = await update.get_bot().get_chat_member(CHANNEL_ID, user_id)
-        return member.status in ["member", "administrator", "creator"]
-    except:
-        return False
+# Кнопка для проверки подписки
+check_keyboard = InlineKeyboardMarkup().add(
+    InlineKeyboardButton("✅ Проверить подписку", callback_data="check_sub")
+)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not await check_subscription(update):
-        await update.message.reply_text(
-            "Чтобы использовать бота, подпишитесь на канал:\nhttps://t.me/F_S_Ta"
+    await update.message.reply_text(
+        "Чтобы использовать бота, подпишитесь на канал:\nhttps://t.me/F_S_Ta\n\n"
+        "После этого нажмите кнопку ниже 👇",
+        reply_markup=check_keyboard
+    )
+    return ConversationHandler.END  # пока не начинаем диалог
+
+async def check_subscription_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+
+    try:
+        member = await context.bot.get_chat_member(CHANNEL_ID, user_id)
+        if member.status in ["member", "administrator", "creator"]:
+            await query.message.reply_text("✅ Подписка подтверждена! Введите текущий тариф (₽/мес):")
+            return await cur_entry_from_callback(update, context)
+        else:
+            raise Exception("Not subscribed")
+    except:
+        await query.message.reply_text(
+            "🚫 Вы не подписались на канал. Пожалуйста, подпишитесь и нажмите кнопку ещё раз.",
+            reply_markup=check_keyboard
         )
         return ConversationHandler.END
 
-    # Если подписан — продолжаем диалог
-    await update.message.reply_text("Введите текущий тариф (₽/мес):")
+# Начинаем опрос после подписки
+async def cur_entry_from_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.clear()  # очищаем предыдущие данные на всякий случай
+    context.user_data["from_callback"] = True
     return CUR
 
+# Опрос
 async def cur_tariff(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data['cur'] = float(update.message.text)
     await update.message.reply_text("Введите новый тариф:")
@@ -95,8 +117,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 
 if __name__ == '__main__':
     app = ApplicationBuilder().token("8134172809:AAFydCkI2T32hYxL6y8zCVlTdp_lrL7hY18").build()
-    conv = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+
+    conv_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, cur_tariff)],
         states={
             CUR: [MessageHandler(filters.TEXT & ~filters.COMMAND, cur_tariff)],
             NEW: [MessageHandler(filters.TEXT & ~filters.COMMAND, new_tariff)],
@@ -105,5 +128,9 @@ if __name__ == '__main__':
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
-    app.add_handler(conv)
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(check_subscription_callback, pattern="check_sub"))
+    app.add_handler(conv_handler)
     app.run_polling()
+    
