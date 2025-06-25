@@ -39,9 +39,13 @@ async def check_subscription(update: Update) -> bool:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if not await check_subscription(update):
-        await update.message.reply_text("Подпишитесь на канал перед использованием: https://t.me/F_S_Ta")
+        await update.message.reply_text(
+            "Чтобы использовать бота, подпишитесь на канал:\nhttps://t.me/F_S_Ta"
+        )
         return ConversationHandler.END
-    await update.message.reply_text("Введите текущий тариф:")
+
+    # Если подписан — продолжаем диалог
+    await update.message.reply_text("Введите текущий тариф (₽/мес):")
     return CUR
 
 async def cur_tariff(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
